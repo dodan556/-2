@@ -2,6 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { SiteConfig, SkillItem, PortfolioItem, ContactMessage } from './types';
 import { DEFAULT_SITE_CONFIG, DEFAULT_SKILLS, DEFAULT_PORTFOLIO_ITEMS } from './data';
 import { savePortfolioToDB, loadPortfolioFromDB } from './utils/db';
+import { 
+  fetchSiteConfig, 
+  saveSiteConfig, 
+  fetchSkills, 
+  saveSkills, 
+  fetchPortfolioItems, 
+  savePortfolioItems, 
+  fetchContactMessages, 
+  saveContactMessage, 
+  deleteContactMessage, 
+  clearAllContactMessages 
+} from './lib/firebase';
 
 import Header from './components/Header';
 import HomeHero from './components/HomeHero';
@@ -91,8 +103,9 @@ export default function App() {
 
   const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [isPortfolioLoaded, setIsPortfolioLoaded] = useState(false);
+  const [firebaseLoaded, setFirebaseLoaded] = useState(false);
 
-  // Load from IndexedDB on mount to support large file assets that don't fit in localStorage
+  // 1. Load local cache from IndexedDB on mount for rapid initial render
   useEffect(() => {
     async function loadFromDB() {
       try {
@@ -109,60 +122,122 @@ export default function App() {
     loadFromDB();
   }, []);
 
-  // Sync state modifications to local storage
+  // 2. Load and synchronize with Firebase Firestore in the background
+  useEffect(() => {
+    async function syncWithFirebase() {
+      try {
+        // Fetch site config
+        const fbConfig = await fetchSiteConfig();
+        if (fbConfig) {
+          setSiteConfig(fbConfig);
+        } else {
+          await saveSiteConfig(siteConfig);
+        }
+
+        // Fetch skills
+        const fbSkills = await fetchSkills();
+        if (fbSkills) {
+          setSkills(fbSkills);
+        } else {
+          await saveSkills(skills);
+        }
+
+        // Fetch portfolio items
+        const fbPortfolio = await fetchPortfolioItems();
+        if (fbPortfolio && fbPortfolio.length > 0) {
+          setPortfolioItems(fbPortfolio);
+        } else {
+          await savePortfolioItems(portfolioItems);
+        }
+
+        // Fetch contact messages
+        const fbMessages = await fetchContactMessages();
+        if (fbMessages) {
+          setMessages(fbMessages);
+        }
+
+        setFirebaseLoaded(true);
+      } catch (err) {
+        console.error('Firebase sync error on mount:', err);
+        setFirebaseLoaded(true); // Proceed anyway to allow local persistence fallback
+      }
+    }
+    syncWithFirebase();
+  }, []);
+
+  // Sync state modifications to local storage & Firestore (only if Firestore is ready)
   useEffect(() => {
     localStorage.setItem('park_seongmi_site_config', JSON.stringify(siteConfig));
-  }, [siteConfig]);
+    if (firebaseLoaded) {
+      saveSiteConfig(siteConfig);
+    }
+  }, [siteConfig, firebaseLoaded]);
 
   useEffect(() => {
     localStorage.setItem('park_seongmi_skills', JSON.stringify(skills));
-  }, [skills]);
+    if (firebaseLoaded) {
+      saveSkills(skills);
+    }
+  }, [skills, firebaseLoaded]);
 
   useEffect(() => {
-    if (!isPortfolioLoaded) return; // Prevent overwriting DB with initial empty/default state
+    if (!isPortfolioLoaded) return; // Prevent overwriting with initial state
 
-    // 1. Always save to IndexedDB first (huge space limit, persistent, highly robust)
+    // Save to IndexedDB first
     savePortfolioToDB(portfolioItems);
 
-    // 2. Try saving to localStorage as fallback, but catch QuotaExceededError gracefully so the app NEVER freezes or crashes
+    // Try saving to localStorage
     try {
       localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(portfolioItems));
     } catch (e) {
-      console.warn('LocalStorage storage limit reached. Large portfolio items saved securely in IndexedDB instead.', e);
+      console.warn('LocalStorage storage limit reached. Large portfolio items saved in IndexedDB instead.', e);
     }
-  }, [portfolioItems, isPortfolioLoaded]);
+
+    if (firebaseLoaded) {
+      savePortfolioItems(portfolioItems);
+    }
+  }, [portfolioItems, isPortfolioLoaded, firebaseLoaded]);
 
   useEffect(() => {
     localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(messages));
   }, [messages]);
 
   // Handle addition of inquiries from clients
-  const handleNewMessage = (newMsg: Omit<ContactMessage, 'id' | 'createdAt'>) => {
+  const handleNewMessage = async (newMsg: Omit<ContactMessage, 'id' | 'createdAt'>) => {
     const messageItem: ContactMessage = {
       ...newMsg,
       id: 'msg-' + Date.now(),
       createdAt: new Date().toISOString()
     };
     setMessages((prev) => [messageItem, ...prev]);
+    await saveContactMessage(messageItem);
   };
 
   // Delete single inquiry
-  const handleDeleteMessage = (id: string) => {
+  const handleDeleteMessage = async (id: string) => {
     setMessages((prev) => prev.filter((m) => m.id !== id));
+    await deleteContactMessage(id);
   };
 
   // Clear all inquiries
-  const handleClearMessages = () => {
+  const handleClearMessages = async () => {
     if (confirm('모든 접수된 문의 내역을 비우시겠습니까?')) {
+      const currentMessages = [...messages];
       setMessages([]);
+      await clearAllContactMessages(currentMessages);
     }
   };
 
   // Import Backup data block
-  const handleImportBackup = (imported: { config: SiteConfig; skills: SkillItem[]; portfolioItems: PortfolioItem[] }) => {
+  const handleImportBackup = async (imported: { config: SiteConfig; skills: SkillItem[]; portfolioItems: PortfolioItem[] }) => {
     setSiteConfig(imported.config);
     setSkills(imported.skills);
     setPortfolioItems(imported.portfolioItems);
+    if (firebaseLoaded) {
+      await saveSiteConfig(imported.config);
+      await saveSkills(imported.skills);
+      await savePortfolioItems(imported.portfolioItems);
+    }
   };
 
   const scrollToSection = (id: string) => {
@@ -219,7 +294,7 @@ export default function App() {
       <footer className="py-12 bg-[#1C1C1A] text-white border-t border-white/5">
         <div className="max-w-7xl mx-auto px-6 md:px-12 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="flex flex-col items-center md:items-start text-center md:text-left space-y-1">
-            <span className="text-xs font-black tracking-[0.25em] text-white uppercase">PARK SEONG MI</span>
+            <span className="text-xs font-black tracking-[0.25em] text-white uppercase">PARK SEONGMI</span>
             <span className="text-[10px] text-white/50 tracking-wider">WEB &amp; VISUAL DESIGNER PORTFOLIO</span>
           </div>
 
@@ -251,7 +326,7 @@ export default function App() {
           </div>
 
           <div className="text-[10px] text-white/40 font-bold tracking-widest">
-            © 2026 PARK SEONG MI. ALL RIGHTS RESERVED.
+            © 2026 PARK SEONGMI. ALL RIGHTS RESERVED.
           </div>
         </div>
       </footer>
