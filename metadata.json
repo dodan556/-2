@@ -1,0 +1,6 @@
+{
+  "name": "박성미 포트폴리오",
+  "description": "웹 & 비주얼 디자이너 박성미의 고품격 비주얼 포트폴리오 및 관리자 시스템",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,277 @@
+import React, { useState, useEffect } from 'react';
+import { SiteConfig, SkillItem, PortfolioItem, ContactMessage } from './types';
+import { DEFAULT_SITE_CONFIG, DEFAULT_SKILLS, DEFAULT_PORTFOLIO_ITEMS } from './data';
+import { savePortfolioToDB, loadPortfolioFromDB } from './utils/db';
+
+import Header from './components/Header';
+import HomeHero from './components/HomeHero';
+import AboutMe from './components/AboutMe';
+import Portfolio from './components/Portfolio';
+import Contact from './components/Contact';
+import AdminPanel from './components/AdminPanel';
+
+export default function App() {
+  // Durable local states synced with LocalStorage
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(() => {
+    const saved = localStorage.getItem('park_seongmi_site_config') || localStorage.getItem('park_sungmi_site_config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        let migrated = false;
+        
+        // Auto-migrate old 4-line main tagline to the new 3-line one
+        if (parsed.heroSubTitleLines && parsed.heroSubTitleLines.length === 4 && parsed.heroSubTitleLines.includes("웹 & 비주얼 디자이너")) {
+          parsed.heroSubTitleLines = [
+            "브랜드의 가치를",
+            "디자인으로 전달하는",
+            "박성미입니다."
+          ];
+          migrated = true;
+        }
+        
+        // Auto-migrate old multi-line intro description to the new concise description
+        if (parsed.introTitle && parsed.introTitle.includes("상세페이지를 중심으로")) {
+          parsed.introTitle = "상세페이지 · 배너 · 리디자인 · 3D 연출 · 영상 제작, 편집";
+          migrated = true;
+        }
+        
+        // Auto-migrate to populate default certificates if missing
+        if (!parsed.certificates || parsed.certificates.length === 0) {
+          parsed.certificates = DEFAULT_SITE_CONFIG.certificates;
+          migrated = true;
+        }
+        
+        if (migrated) {
+          localStorage.setItem('park_seongmi_site_config', JSON.stringify(parsed));
+        }
+        return parsed;
+      } catch (e) {
+        console.error('Failed to parse site config', e);
+      }
+    }
+    return DEFAULT_SITE_CONFIG;
+  });
+
+  const [skills, setSkills] = useState<SkillItem[]>(() => {
+    const saved = localStorage.getItem('park_seongmi_skills') || localStorage.getItem('park_sungmi_skills');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse skills', e);
+      }
+    }
+    return DEFAULT_SKILLS;
+  });
+
+  const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>(() => {
+    // Synchronously try localStorage first on startup for fast first render, but we'll load from IndexedDB immediately after
+    const saved = localStorage.getItem('park_seongmi_portfolio_items') || localStorage.getItem('park_sungmi_portfolio_items');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse portfolio items from localStorage', e);
+      }
+    }
+    return DEFAULT_PORTFOLIO_ITEMS;
+  });
+
+  const [messages, setMessages] = useState<ContactMessage[]>(() => {
+    const saved = localStorage.getItem('park_seongmi_contact_messages') || localStorage.getItem('park_sungmi_contact_messages');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse contact messages', e);
+      }
+    }
+    return [];
+  });
+
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
+  const [isPortfolioLoaded, setIsPortfolioLoaded] = useState(false);
+
+  // Load from IndexedDB on mount to support large file assets that don't fit in localStorage
+  useEffect(() => {
+    async function loadFromDB() {
+      try {
+        const dbItems = await loadPortfolioFromDB();
+        if (dbItems && dbItems.length > 0) {
+          setPortfolioItems(dbItems);
+        }
+      } catch (err) {
+        console.error('Failed to load portfolio items from IndexedDB', err);
+      } finally {
+        setIsPortfolioLoaded(true);
+      }
+    }
+    loadFromDB();
+  }, []);
+
+  // Sync state modifications to local storage
+  useEffect(() => {
+    localStorage.setItem('park_seongmi_site_config', JSON.stringify(siteConfig));
+  }, [siteConfig]);
+
+  useEffect(() => {
+    localStorage.setItem('park_seongmi_skills', JSON.stringify(skills));
+  }, [skills]);
+
+  useEffect(() => {
+    if (!isPortfolioLoaded) return; // Prevent overwriting DB with initial empty/default state
+
+    // 1. Always save to IndexedDB first (huge space limit, persistent, highly robust)
+    savePortfolioToDB(portfolioItems);
+
+    // 2. Try saving to localStorage as fallback, but catch QuotaExceededError gracefully so the app NEVER freezes or crashes
+    try {
+      localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(portfolioItems));
+    } catch (e) {
+      console.warn('LocalStorage storage limit reached. Large portfolio items saved securely in IndexedDB instead.', e);
+    }
+  }, [portfolioItems, isPortfolioLoaded]);
+
+  useEffect(() => {
+    localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(messages));
+  }, [messages]);
+
+  // Handle addition of inquiries from clients
+  const handleNewMessage = (newMsg: Omit<ContactMessage, 'id' | 'createdAt'>) => {
+    const messageItem: ContactMessage = {
+      ...newMsg,
+      id: 'msg-' + Date.now(),
+      createdAt: new Date().toISOString()
+    };
+    setMessages((prev) => [messageItem, ...prev]);
+  };
+
+  // Delete single inquiry
+  const handleDeleteMessage = (id: string) => {
+    setMessages((prev) => prev.filter((m) => m.id !== id));
+  };
+
+  // Clear all inquiries
+  const handleClearMessages = () => {
+    if (confirm('모든 접수된 문의 내역을 비우시겠습니까?')) {
+      setMessages([]);
+    }
+  };
+
+  // Import Backup data block
+  const handleImportBackup = (imported: { config: SiteConfig; skills: SkillItem[]; portfolioItems: PortfolioItem[] }) => {
+    setSiteConfig(imported.config);
+    setSkills(imported.skills);
+    setPortfolioItems(imported.portfolioItems);
+  };
+
+  const scrollToSection = (id: string) => {
+    const element = document.getElementById(id);
+    if (element) {
+      const headerOffset = 80;
+      const elementPosition = element.getBoundingClientRect().top;
+      const offsetPosition = elementPosition + window.pageYOffset - headerOffset;
+
+      window.scrollTo({
+        top: offsetPosition,
+        behavior: 'smooth'
+      });
+    }
+  };
+
+  return (
+    <div id="portfolio-applet" className="min-h-screen bg-[#FBFBFA] flex flex-col relative">
+      
+      {/* Navigation Header */}
+      <Header
+        onAdminClick={() => setIsAdminOpen(!isAdminOpen)}
+        isAdminActive={isAdminOpen}
+      />
+
+      {/* Main Sections */}
+      <main className="flex-grow">
+        {/* HOME SECTION */}
+        <HomeHero
+          config={siteConfig}
+          portfolioItems={portfolioItems}
+          onScrollToSection={scrollToSection}
+        />
+
+        {/* ABOUT ME SECTION */}
+        <AboutMe
+          config={siteConfig}
+          skills={skills}
+        />
+
+        {/* PORTFOLIO SECTION */}
+        <Portfolio
+          items={portfolioItems}
+        />
+
+        {/* CONTACT SECTION */}
+        <Contact
+          config={siteConfig}
+          onNewMessage={handleNewMessage}
+        />
+      </main>
+
+      {/* Premium minimal luxury Footer */}
+      <footer className="py-12 bg-[#1C1C1A] text-white border-t border-white/5">
+        <div className="max-w-7xl mx-auto px-6 md:px-12 flex flex-col md:flex-row items-center justify-between gap-6">
+          <div className="flex flex-col items-center md:items-start text-center md:text-left space-y-1">
+            <span className="text-xs font-black tracking-[0.25em] text-white uppercase">PARK SEONG MI</span>
+            <span className="text-[10px] text-white/50 tracking-wider">WEB &amp; VISUAL DESIGNER PORTFOLIO</span>
+          </div>
+
+          <div className="flex flex-wrap justify-center gap-6">
+            <button
+              onClick={() => scrollToSection('home')}
+              className="text-[10px] font-extrabold tracking-widest text-white/60 hover:text-white transition-colors"
+            >
+              HOME
+            </button>
+            <button
+              onClick={() => scrollToSection('about')}
+              className="text-[10px] font-extrabold tracking-widest text-white/60 hover:text-white transition-colors"
+            >
+              ABOUT ME
+            </button>
+            <button
+              onClick={() => scrollToSection('portfolio')}
+              className="text-[10px] font-extrabold tracking-widest text-white/60 hover:text-white transition-colors"
+            >
+              PORTFOLIO
+            </button>
+            <button
+              onClick={() => scrollToSection('contact')}
+              className="text-[10px] font-extrabold tracking-widest text-white/60 hover:text-white transition-colors"
+            >
+              CONTACT
+            </button>
+          </div>
+
+          <div className="text-[10px] text-white/40 font-bold tracking-widest">
+            © 2026 PARK SEONG MI. ALL RIGHTS RESERVED.
+          </div>
+        </div>
+      </footer>
+
+      {/* ADMIN CONTROL PANEL WORKSPACE MODAL */}
+      <AdminPanel
+        isOpen={isAdminOpen}
+        onClose={() => setIsAdminOpen(false)}
+        config={siteConfig}
+        onSaveConfig={setSiteConfig}
+        skills={skills}
+        onSaveSkills={setSkills}
+        portfolioItems={portfolioItems}
+        onSavePortfolioItems={setPortfolioItems}
+        messages={messages}
+        onClearMessages={handleClearMessages}
+        onDeleteMessage={handleDeleteMessage}
+        onImportBackup={handleImportBackup}
+      />
+
+    </div>
+  );
+}
