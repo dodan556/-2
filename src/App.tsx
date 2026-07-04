@@ -130,24 +130,18 @@ export default function App() {
         const fbConfig = await fetchSiteConfig();
         if (fbConfig) {
           setSiteConfig(fbConfig);
-        } else {
-          await saveSiteConfig(siteConfig);
         }
 
         // Fetch skills
         const fbSkills = await fetchSkills();
         if (fbSkills) {
           setSkills(fbSkills);
-        } else {
-          await saveSkills(skills);
         }
 
         // Fetch portfolio items
         const fbPortfolio = await fetchPortfolioItems();
         if (fbPortfolio && fbPortfolio.length > 0) {
           setPortfolioItems(fbPortfolio);
-        } else {
-          await savePortfolioItems(portfolioItems);
         }
 
         // Fetch contact messages
@@ -165,20 +159,14 @@ export default function App() {
     syncWithFirebase();
   }, []);
 
-  // Sync state modifications to local storage & Firestore (only if Firestore is ready)
+  // Sync state modifications to local storage only (never auto-save to Firestore on render)
   useEffect(() => {
     localStorage.setItem('park_seongmi_site_config', JSON.stringify(siteConfig));
-    if (firebaseLoaded) {
-      saveSiteConfig(siteConfig);
-    }
-  }, [siteConfig, firebaseLoaded]);
+  }, [siteConfig]);
 
   useEffect(() => {
     localStorage.setItem('park_seongmi_skills', JSON.stringify(skills));
-    if (firebaseLoaded) {
-      saveSkills(skills);
-    }
-  }, [skills, firebaseLoaded]);
+  }, [skills]);
 
   useEffect(() => {
     if (!isPortfolioLoaded) return; // Prevent overwriting with initial state
@@ -192,15 +180,39 @@ export default function App() {
     } catch (e) {
       console.warn('LocalStorage storage limit reached. Large portfolio items saved in IndexedDB instead.', e);
     }
-
-    if (firebaseLoaded) {
-      savePortfolioItems(portfolioItems);
-    }
-  }, [portfolioItems, isPortfolioLoaded, firebaseLoaded]);
+  }, [portfolioItems, isPortfolioLoaded]);
 
   useEffect(() => {
     localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(messages));
   }, [messages]);
+
+  // Explicit handlers to save modifications to both local memory and remote Firebase Firestore
+  const handleSaveConfig = async (newConfig: SiteConfig) => {
+    setSiteConfig(newConfig);
+    if (firebaseLoaded) {
+      await saveSiteConfig(newConfig);
+    }
+  };
+
+  const handleSaveSkills = async (newSkills: SkillItem[]) => {
+    setSkills(newSkills);
+    if (firebaseLoaded) {
+      await saveSkills(newSkills);
+    }
+  };
+
+  const handleSavePortfolioItems = async (newItems: PortfolioItem[]) => {
+    setPortfolioItems(newItems);
+    savePortfolioToDB(newItems);
+    try {
+      localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(newItems));
+    } catch (e) {
+      console.warn('LocalStorage storage limit reached. Portfolio items saved in IndexedDB.', e);
+    }
+    if (firebaseLoaded) {
+      await savePortfolioItems(newItems);
+    }
+  };
 
   // Handle addition of inquiries from clients
   const handleNewMessage = async (newMsg: Omit<ContactMessage, 'id' | 'createdAt'>) => {
@@ -336,11 +348,11 @@ export default function App() {
         isOpen={isAdminOpen}
         onClose={() => setIsAdminOpen(false)}
         config={siteConfig}
-        onSaveConfig={setSiteConfig}
+        onSaveConfig={handleSaveConfig}
         skills={skills}
-        onSaveSkills={setSkills}
+        onSaveSkills={handleSaveSkills}
         portfolioItems={portfolioItems}
-        onSavePortfolioItems={setPortfolioItems}
+        onSavePortfolioItems={handleSavePortfolioItems}
         messages={messages}
         onClearMessages={handleClearMessages}
         onDeleteMessage={handleDeleteMessage}
