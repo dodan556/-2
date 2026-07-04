@@ -105,90 +105,84 @@ export default function App() {
   const [isPortfolioLoaded, setIsPortfolioLoaded] = useState(false);
   const [firebaseLoaded, setFirebaseLoaded] = useState(false);
 
-  // 1. Load local cache from IndexedDB on mount for rapid initial render
+  // Load and synchronize all data sequentially on mount to prevent race conditions
   useEffect(() => {
-    async function loadFromDB() {
+    async function initializeAndSync() {
+      // Step 1: Load local cache immediately for an instant UI load
       try {
+        const savedConfig = localStorage.getItem('park_seongmi_site_config');
+        if (savedConfig) {
+          try { setSiteConfig(JSON.parse(savedConfig)); } catch (e) {}
+        }
+        
+        const savedSkills = localStorage.getItem('park_seongmi_skills');
+        if (savedSkills) {
+          try { setSkills(JSON.parse(savedSkills)); } catch (e) {}
+        }
+
         const dbItems = await loadPortfolioFromDB();
         if (dbItems && dbItems.length > 0) {
           setPortfolioItems(dbItems);
+        } else {
+          const savedItems = localStorage.getItem('park_seongmi_portfolio_items');
+          if (savedItems) {
+            try { setPortfolioItems(JSON.parse(savedItems)); } catch (e) {}
+          }
+        }
+
+        const savedMessages = localStorage.getItem('park_seongmi_contact_messages');
+        if (savedMessages) {
+          try { setMessages(JSON.parse(savedMessages)); } catch (e) {}
         }
       } catch (err) {
-        console.error('Failed to load portfolio items from IndexedDB', err);
+        console.error('Failed to load local cached data:', err);
       } finally {
         setIsPortfolioLoaded(true);
       }
-    }
-    loadFromDB();
-  }, []);
 
-  // 2. Load and synchronize with Firebase Firestore in the background
-  useEffect(() => {
-    async function syncWithFirebase() {
+      // Step 2: Fetch fresh data from Firebase (True Cloud Source of Truth) in the background
       try {
-        // Fetch site config
         const fbConfig = await fetchSiteConfig();
         if (fbConfig) {
           setSiteConfig(fbConfig);
+          localStorage.setItem('park_seongmi_site_config', JSON.stringify(fbConfig));
         }
 
-        // Fetch skills
         const fbSkills = await fetchSkills();
         if (fbSkills) {
           setSkills(fbSkills);
+          localStorage.setItem('park_seongmi_skills', JSON.stringify(fbSkills));
         }
 
-        // Fetch portfolio items
         const fbPortfolio = await fetchPortfolioItems();
         if (fbPortfolio && fbPortfolio.length > 0) {
           setPortfolioItems(fbPortfolio);
+          await savePortfolioToDB(fbPortfolio);
+          try {
+            localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(fbPortfolio));
+          } catch (e) {}
         }
 
-        // Fetch contact messages
         const fbMessages = await fetchContactMessages();
         if (fbMessages) {
           setMessages(fbMessages);
+          localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(fbMessages));
         }
 
         setFirebaseLoaded(true);
       } catch (err) {
-        console.error('Firebase sync error on mount:', err);
-        setFirebaseLoaded(true); // Proceed anyway to allow local persistence fallback
+        console.error('Firebase Cloud synchronization failed:', err);
+        setFirebaseLoaded(true); // Continue so user can fully operate in local fallback/cache mode
       }
     }
-    syncWithFirebase();
+
+    initializeAndSync();
   }, []);
 
-  // Sync state modifications to local storage only (never auto-save to Firestore on render)
-  useEffect(() => {
-    localStorage.setItem('park_seongmi_site_config', JSON.stringify(siteConfig));
-  }, [siteConfig]);
-
-  useEffect(() => {
-    localStorage.setItem('park_seongmi_skills', JSON.stringify(skills));
-  }, [skills]);
-
-  useEffect(() => {
-    if (!isPortfolioLoaded) return; // Prevent overwriting with initial state
-
-    // Save to IndexedDB first
-    savePortfolioToDB(portfolioItems);
-
-    // Try saving to localStorage
-    try {
-      localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(portfolioItems));
-    } catch (e) {
-      console.warn('LocalStorage storage limit reached. Large portfolio items saved in IndexedDB instead.', e);
-    }
-  }, [portfolioItems, isPortfolioLoaded]);
-
-  useEffect(() => {
-    localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(messages));
-  }, [messages]);
-
-  // Explicit handlers to save modifications to both local memory and remote Firebase Firestore
+  // Explicit handlers to save modifications to both local memory/caches and remote Firebase Firestore
   const handleSaveConfig = async (newConfig: SiteConfig) => {
     setSiteConfig(newConfig);
+    localStorage.setItem('park_seongmi_site_config', JSON.stringify(newConfig));
     if (firebaseLoaded) {
       await saveSiteConfig(newConfig);
     }
@@ -196,6 +190,7 @@ export default function App() {
 
   const handleSaveSkills = async (newSkills: SkillItem[]) => {
     setSkills(newSkills);
+    localStorage.setItem('park_seongmi_skills', JSON.stringify(newSkills));
     if (firebaseLoaded) {
       await saveSkills(newSkills);
     }
@@ -203,11 +198,11 @@ export default function App() {
 
   const handleSavePortfolioItems = async (newItems: PortfolioItem[]) => {
     setPortfolioItems(newItems);
-    savePortfolioToDB(newItems);
+    await savePortfolioToDB(newItems);
     try {
       localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(newItems));
     } catch (e) {
-      console.warn('LocalStorage storage limit reached. Portfolio items saved in IndexedDB.', e);
+      console.warn('LocalStorage storage limit reached. Large portfolio items saved in IndexedDB.', e);
     }
     if (firebaseLoaded) {
       await savePortfolioItems(newItems);
@@ -221,13 +216,21 @@ export default function App() {
       id: 'msg-' + Date.now(),
       createdAt: new Date().toISOString()
     };
-    setMessages((prev) => [messageItem, ...prev]);
+    setMessages((prev) => {
+      const updated = [messageItem, ...prev];
+      localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(updated));
+      return updated;
+    });
     await saveContactMessage(messageItem);
   };
 
   // Delete single inquiry
   const handleDeleteMessage = async (id: string) => {
-    setMessages((prev) => prev.filter((m) => m.id !== id));
+    setMessages((prev) => {
+      const updated = prev.filter((m) => m.id !== id);
+      localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(updated));
+      return updated;
+    });
     await deleteContactMessage(id);
   };
 
@@ -236,6 +239,7 @@ export default function App() {
     if (confirm('모든 접수된 문의 내역을 비우시겠습니까?')) {
       const currentMessages = [...messages];
       setMessages([]);
+      localStorage.setItem('park_seongmi_contact_messages', JSON.stringify([]));
       await clearAllContactMessages(currentMessages);
     }
   };
@@ -245,6 +249,14 @@ export default function App() {
     setSiteConfig(imported.config);
     setSkills(imported.skills);
     setPortfolioItems(imported.portfolioItems);
+    
+    localStorage.setItem('park_seongmi_site_config', JSON.stringify(imported.config));
+    localStorage.setItem('park_seongmi_skills', JSON.stringify(imported.skills));
+    try {
+      localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(imported.portfolioItems));
+    } catch (e) {}
+    await savePortfolioToDB(imported.portfolioItems);
+
     if (firebaseLoaded) {
       await saveSiteConfig(imported.config);
       await saveSkills(imported.skills);
