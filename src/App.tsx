@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SiteConfig, SkillItem, PortfolioItem, ContactMessage } from './types';
 import { DEFAULT_SITE_CONFIG, DEFAULT_SKILLS, DEFAULT_PORTFOLIO_ITEMS } from './data';
+import { savePortfolioToDB, loadPortfolioFromDB } from './utils/db';
 import { 
   fetchSiteConfig, 
   saveSiteConfig, 
@@ -22,92 +23,194 @@ import Contact from './components/Contact';
 import AdminPanel from './components/AdminPanel';
 
 export default function App() {
-  // Master states loaded directly from remote Firebase Firestore
-  const [siteConfig, setSiteConfig] = useState<SiteConfig>(DEFAULT_SITE_CONFIG);
-  const [skills, setSkills] = useState<SkillItem[]>(DEFAULT_SKILLS);
-  const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>(DEFAULT_PORTFOLIO_ITEMS);
-  const [messages, setMessages] = useState<ContactMessage[]>([]);
+  // Durable local states synced with LocalStorage
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(() => {
+    const saved = localStorage.getItem('park_seongmi_site_config') || localStorage.getItem('park_sungmi_site_config');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        let migrated = false;
+        
+        // Auto-migrate old 4-line main tagline to the new 3-line one
+        if (parsed.heroSubTitleLines && parsed.heroSubTitleLines.length === 4 && parsed.heroSubTitleLines.includes("웹 & 비주얼 디자이너")) {
+          parsed.heroSubTitleLines = [
+            "브랜드의 가치를",
+            "디자인으로 전달하는",
+            "박성미입니다."
+          ];
+          migrated = true;
+        }
+        
+        // Auto-migrate old multi-line intro description to the new concise description
+        if (parsed.introTitle && parsed.introTitle.includes("상세페이지를 중심으로")) {
+          parsed.introTitle = "상세페이지 · 배너 · 리디자인 · 3D 연출 · 영상 제작, 편집";
+          migrated = true;
+        }
+        
+        // Auto-migrate to populate default certificates if missing
+        if (!parsed.certificates || parsed.certificates.length === 0) {
+          parsed.certificates = DEFAULT_SITE_CONFIG.certificates;
+          migrated = true;
+        }
+        
+        if (migrated) {
+          localStorage.setItem('park_seongmi_site_config', JSON.stringify(parsed));
+        }
+        return parsed;
+      } catch (e) {
+        console.error('Failed to parse site config', e);
+      }
+    }
+    return DEFAULT_SITE_CONFIG;
+  });
+
+  const [skills, setSkills] = useState<SkillItem[]>(() => {
+    const saved = localStorage.getItem('park_seongmi_skills') || localStorage.getItem('park_sungmi_skills');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse skills', e);
+      }
+    }
+    return DEFAULT_SKILLS;
+  });
+
+  const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>(() => {
+    // Synchronously try localStorage first on startup for fast first render, but we'll load from IndexedDB immediately after
+    const saved = localStorage.getItem('park_seongmi_portfolio_items') || localStorage.getItem('park_sungmi_portfolio_items');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse portfolio items from localStorage', e);
+      }
+    }
+    return DEFAULT_PORTFOLIO_ITEMS;
+  });
+
+  const [messages, setMessages] = useState<ContactMessage[]>(() => {
+    const saved = localStorage.getItem('park_seongmi_contact_messages') || localStorage.getItem('park_sungmi_contact_messages');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        console.error('Failed to parse contact messages', e);
+      }
+    }
+    return [];
+  });
 
   const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
-  const [firebaseError, setFirebaseError] = useState<string | null>(null);
+  const [isPortfolioLoaded, setIsPortfolioLoaded] = useState(false);
+  const [firebaseLoaded, setFirebaseLoaded] = useState(false);
 
-  // Synchronously fetch and initialize all data from Firebase Firestore as the unique Cloud Source of Truth
+  // 1. Load local cache from IndexedDB on mount for rapid initial render
   useEffect(() => {
-    async function loadDataFromFirestore() {
+    async function loadFromDB() {
       try {
-        setIsLoading(true);
-        setFirebaseError(null);
-
-        // 1. Fetch Site Config from Cloud Firestore
-        let fbConfig = await fetchSiteConfig();
-        if (!fbConfig) {
-          // If empty/new db, self-seed with beautiful default preset
-          fbConfig = DEFAULT_SITE_CONFIG;
-          await saveSiteConfig(DEFAULT_SITE_CONFIG);
+        const dbItems = await loadPortfolioFromDB();
+        if (dbItems && dbItems.length > 0) {
+          setPortfolioItems(dbItems);
         }
-        setSiteConfig(fbConfig);
+      } catch (err) {
+        console.error('Failed to load portfolio items from IndexedDB', err);
+      } finally {
+        setIsPortfolioLoaded(true);
+      }
+    }
+    loadFromDB();
+  }, []);
 
-        // 2. Fetch Skills from Cloud Firestore
-        let fbSkills = await fetchSkills();
-        if (!fbSkills || fbSkills.length === 0) {
-          fbSkills = DEFAULT_SKILLS;
-          await saveSkills(DEFAULT_SKILLS);
+  // 2. Load and synchronize with Firebase Firestore in the background
+  useEffect(() => {
+    async function syncWithFirebase() {
+      try {
+        // Fetch site config
+        const fbConfig = await fetchSiteConfig();
+        if (fbConfig) {
+          setSiteConfig(fbConfig);
         }
-        setSkills(fbSkills);
 
-        // 3. Fetch Portfolio Items from Cloud Firestore
-        let fbPortfolio = await fetchPortfolioItems();
-        if (!fbPortfolio || fbPortfolio.length === 0) {
-          fbPortfolio = DEFAULT_PORTFOLIO_ITEMS;
-          await savePortfolioItems(DEFAULT_PORTFOLIO_ITEMS);
+        // Fetch skills
+        const fbSkills = await fetchSkills();
+        if (fbSkills) {
+          setSkills(fbSkills);
         }
-        setPortfolioItems(fbPortfolio);
 
-        // 4. Fetch Client Inquiries/Contact Messages from Cloud Firestore
+        // Fetch portfolio items
+        const fbPortfolio = await fetchPortfolioItems();
+        if (fbPortfolio && fbPortfolio.length > 0) {
+          setPortfolioItems(fbPortfolio);
+        }
+
+        // Fetch contact messages
         const fbMessages = await fetchContactMessages();
         if (fbMessages) {
           setMessages(fbMessages);
         }
-      } catch (err: any) {
-        console.error('Failed to synchronize Firestore cloud data:', err);
-        setFirebaseError(err.message || 'Firebase Cloud Error');
-      } finally {
-        setIsLoading(false);
+
+        setFirebaseLoaded(true);
+      } catch (err) {
+        console.error('Firebase sync error on mount:', err);
+        setFirebaseLoaded(true); // Proceed anyway to allow local persistence fallback
       }
     }
-
-    loadDataFromFirestore();
+    syncWithFirebase();
   }, []);
 
-  // Handlers will update state instantly and save permanently directly inside Firebase Firestore
+  // Sync state modifications to local storage only (never auto-save to Firestore on render)
+  useEffect(() => {
+    localStorage.setItem('park_seongmi_site_config', JSON.stringify(siteConfig));
+  }, [siteConfig]);
+
+  useEffect(() => {
+    localStorage.setItem('park_seongmi_skills', JSON.stringify(skills));
+  }, [skills]);
+
+  useEffect(() => {
+    if (!isPortfolioLoaded) return; // Prevent overwriting with initial state
+
+    // Save to IndexedDB first
+    savePortfolioToDB(portfolioItems);
+
+    // Try saving to localStorage
+    try {
+      localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(portfolioItems));
+    } catch (e) {
+      console.warn('LocalStorage storage limit reached. Large portfolio items saved in IndexedDB instead.', e);
+    }
+  }, [portfolioItems, isPortfolioLoaded]);
+
+  useEffect(() => {
+    localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(messages));
+  }, [messages]);
+
+  // Explicit handlers to save modifications to both local memory and remote Firebase Firestore
   const handleSaveConfig = async (newConfig: SiteConfig) => {
     setSiteConfig(newConfig);
-    try {
+    if (firebaseLoaded) {
       await saveSiteConfig(newConfig);
-    } catch (err) {
-      console.error('Failed to save config to Firestore:', err);
-      alert('데이터베이스 저장 중 실패했습니다.');
     }
   };
 
   const handleSaveSkills = async (newSkills: SkillItem[]) => {
     setSkills(newSkills);
-    try {
+    if (firebaseLoaded) {
       await saveSkills(newSkills);
-    } catch (err) {
-      console.error('Failed to save skills to Firestore:', err);
-      alert('데이터베이스 저장 중 실패했습니다.');
     }
   };
 
   const handleSavePortfolioItems = async (newItems: PortfolioItem[]) => {
     setPortfolioItems(newItems);
+    savePortfolioToDB(newItems);
     try {
+      localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(newItems));
+    } catch (e) {
+      console.warn('LocalStorage storage limit reached. Portfolio items saved in IndexedDB.', e);
+    }
+    if (firebaseLoaded) {
       await savePortfolioItems(newItems);
-    } catch (err) {
-      console.error('Failed to save portfolio items to Firestore:', err);
-      alert('데이터베이스 저장 중 실패했습니다.');
     }
   };
 
@@ -122,13 +225,13 @@ export default function App() {
     await saveContactMessage(messageItem);
   };
 
-  // Delete single inquiry from Firestore
+  // Delete single inquiry
   const handleDeleteMessage = async (id: string) => {
     setMessages((prev) => prev.filter((m) => m.id !== id));
     await deleteContactMessage(id);
   };
 
-  // Clear all inquiries from Firestore
+  // Clear all inquiries
   const handleClearMessages = async () => {
     if (confirm('모든 접수된 문의 내역을 비우시겠습니까?')) {
       const currentMessages = [...messages];
@@ -137,19 +240,15 @@ export default function App() {
     }
   };
 
-  // Import Backup and restore Firestore database in real-time
+  // Import Backup data block
   const handleImportBackup = async (imported: { config: SiteConfig; skills: SkillItem[]; portfolioItems: PortfolioItem[] }) => {
     setSiteConfig(imported.config);
     setSkills(imported.skills);
     setPortfolioItems(imported.portfolioItems);
-    try {
+    if (firebaseLoaded) {
       await saveSiteConfig(imported.config);
       await saveSkills(imported.skills);
       await savePortfolioItems(imported.portfolioItems);
-      alert('🎉 축하합니다! 백업 파일의 모든 데이터가 Firebase Firestore 클라우드 데이터베이스에 실시간으로 성공적으로 영구 복원되었습니다!');
-    } catch (err) {
-      console.error('Failed to restore backup to Firestore:', err);
-      alert('데이터베이스 영구 저장 중 실패했습니다.');
     }
   };
 
@@ -166,17 +265,6 @@ export default function App() {
       });
     }
   };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-[#FBFBFA] flex flex-col items-center justify-center space-y-4">
-        {/* Modern minimal loading spinner */}
-        <div className="w-10 h-10 border-2 border-[#1C1C1A]/10 border-t-[#1C1C1A] rounded-full animate-spin"></div>
-        <p className="text-xs font-black tracking-[0.2em] text-[#1C1C1A] uppercase">PARK SEONGMI</p>
-        <p className="text-[10px] text-[#70706B] tracking-wider animate-pulse">포트폴리오 데이터를 안전하게 동기화 중입니다...</p>
-      </div>
-    );
-  }
 
   return (
     <div id="portfolio-applet" className="min-h-screen bg-[#FBFBFA] flex flex-col relative">
