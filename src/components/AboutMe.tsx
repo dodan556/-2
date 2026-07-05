@@ -54,9 +54,9 @@ export default function AboutMe({ config, skills }: AboutMeProps) {
         return (
           <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#1A1108] to-[#0A0602] border border-[#448CFA]/30 flex items-center justify-center shadow-md relative overflow-hidden group-hover:border-[#448CFA]/60 transition-all duration-300">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <rect x="3" y="3" width="18" height="18" rx="4" stroke="#448CFA" strokeWidth="2" fill="none"/>
-              <circle cx="12" cy="12" r="5" fill="#448CFA" fillOpacity="0.3" stroke="#448CFA" strokeWidth="1.5"/>
-              <path d="M12 12 L17 17" stroke="#448CFA" strokeWidth="2" strokeLinecap="round"/>
+              <rect x="3" y="3" width="18" height="18" rx="4" stroke="#448CFA" stroke-width="2" fill="none"/>
+              <circle cx="12" cy="12" r="5" fill="#448CFA" fill-opacity="0.3" stroke="#448CFA" stroke-width="1.5"/>
+              <path d="M12 12 L17 17" stroke="#448CFA" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </div>
         );
@@ -66,8 +66,8 @@ export default function AboutMe({ config, skills }: AboutMeProps) {
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
               {/* Abstract blender camera fan */}
               <circle cx="12" cy="13" r="4" fill="#F57C00"/>
-              <path d="M12 9 C 14 6, 17 6, 19 8" stroke="#F57C00" strokeWidth="2.5" strokeLinecap="round"/>
-              <path d="M 12 13 L 20 6" stroke="#F57C00" strokeWidth="2.5" strokeLinecap="round"/>
+              <path d="M12 9 C 14 6, 17 6, 19 8" stroke="#F57C00" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M 12 13 L 20 6" stroke="#F57C00" stroke-width="2.5" stroke-linecap="round"/>
               <circle cx="20" cy="6" r="1.5" fill="#F57C00"/>
               <circle cx="12" cy="13" r="1.5" fill="white"/>
             </svg>

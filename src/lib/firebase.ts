@@ -14,41 +14,24 @@ import {
 import { SiteConfig, SkillItem, PortfolioItem, ContactMessage } from "../types";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBFpAKR2Rnm_qiqYG3r63pceQjvXLZj_6c",
-  authDomain: "project-psm-6676d.firebaseapp.com",
-  projectId: "project-psm-6676d",
-  storageBucket: "project-psm-6676d.firebasestorage.app",
-  messagingSenderId: "773062713220",
-  appId: "1:773062713220:web:343d5d9931a75d4f5a07d1"
+  projectId: "gen-lang-client-0862858522",
+  appId: "1:959517487810:web:6e1675967ca2210c17815b",
+  apiKey: "AIzaSyAdBJpqKmKUyYOdoZemLGowf9uIXO78Kn8",
+  authDomain: "gen-lang-client-0862858522.firebaseapp.com",
+  firestoreDatabaseId: "ai-studio-3-e6b88e0c-4a46-45ca-b67d-a2d61f520701",
+  storageBucket: "gen-lang-client-0862858522.firebasestorage.app",
+  messagingSenderId: "959517487810",
+  measurementId: ""
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
-// Firestore Connection Test
-export async function testFirestoreConnection(): Promise<{ success: boolean; message: string; error?: any }> {
-  try {
-    const docRef = doc(db, "site_config", "current");
-    await getDoc(docRef);
-    
-    // Connection succeeded! Print the required console messages:
-    console.log("Firebase Connected");
-    console.log(firebaseConfig.projectId);
-    
-    return { success: true, message: "Successfully connected and verified Firestore read." };
-  } catch (error: any) {
-    // Connection failed! Print the required error console message:
-    console.error(error);
-    return { success: false, message: `Failed to connect or read site_config: ${error.message || error}`, error };
-  }
-}
-
-// Site Config Helper (Read-only on fetch)
+// Site Config Helper
 export async function fetchSiteConfig(): Promise<SiteConfig | null> {
   try {
-    const docRef = doc(db, "site_config", "current");
-    const docSnap = await getDoc(docRef);
+    const docSnap = await getDoc(doc(db, "site_config", "current"));
     if (docSnap.exists()) {
       return docSnap.data() as SiteConfig;
     }
@@ -66,11 +49,10 @@ export async function saveSiteConfig(config: SiteConfig): Promise<void> {
   }
 }
 
-// Skills Helper (Read-only on fetch)
+// Skills Helper
 export async function fetchSkills(): Promise<SkillItem[] | null> {
   try {
-    const docRef = doc(db, "skills", "current");
-    const docSnap = await getDoc(docRef);
+    const docSnap = await getDoc(doc(db, "skills", "current"));
     if (docSnap.exists()) {
       const data = docSnap.data();
       return data.list as SkillItem[];
@@ -89,18 +71,21 @@ export async function saveSkills(skills: SkillItem[]): Promise<void> {
   }
 }
 
-// Portfolio Items Helper (Read-only on fetch)
+// Portfolio Items Helper
 export async function fetchPortfolioItems(): Promise<PortfolioItem[] | null> {
   try {
     const q = query(collection(db, "portfolio_items"), orderBy("order", "asc"));
     const querySnapshot = await getDocs(q);
-    const items: PortfolioItem[] = [];
-    querySnapshot.forEach((doc) => {
-      const data = doc.data();
-      const { order, ...itemData } = data;
-      items.push({ id: doc.id, ...itemData } as PortfolioItem);
-    });
-    return items;
+    if (!querySnapshot.empty) {
+      const items: PortfolioItem[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        // Remove 'order' field when mapping back to PortfolioItem
+        const { order, ...itemData } = data;
+        items.push({ id: doc.id, ...itemData } as PortfolioItem);
+      });
+      return items;
+    }
   } catch (err) {
     console.error("Error fetching portfolio items from Firestore:", err);
   }
@@ -109,6 +94,7 @@ export async function fetchPortfolioItems(): Promise<PortfolioItem[] | null> {
 
 export async function savePortfolioItems(items: PortfolioItem[]): Promise<void> {
   try {
+    // 1. Fetch current document IDs in Firestore to know what to delete
     const querySnapshot = await getDocs(collection(db, "portfolio_items"));
     const existingIds = new Set<string>();
     querySnapshot.forEach((doc) => {
@@ -116,6 +102,8 @@ export async function savePortfolioItems(items: PortfolioItem[]): Promise<void> 
     });
 
     const batch = writeBatch(db);
+
+    // 2. Set/update documents in the new list with an 'order' field to maintain sorting
     const newIds = new Set<string>();
     items.forEach((item, index) => {
       const docRef = doc(db, "portfolio_items", item.id);
@@ -126,6 +114,7 @@ export async function savePortfolioItems(items: PortfolioItem[]): Promise<void> 
       newIds.add(item.id);
     });
 
+    // 3. Delete documents that are no longer in the new list
     existingIds.forEach((id) => {
       if (!newIds.has(id)) {
         const docRef = doc(db, "portfolio_items", id);
