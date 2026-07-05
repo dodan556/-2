@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { SiteConfig, SkillItem, PortfolioItem, ContactMessage } from './types';
 import { DEFAULT_SITE_CONFIG, DEFAULT_SKILLS, DEFAULT_PORTFOLIO_ITEMS } from './data';
-import { savePortfolioToDB, loadPortfolioFromDB } from './utils/db';
 import { 
   fetchSiteConfig, 
   saveSiteConfig, 
@@ -24,132 +23,38 @@ import Contact from './components/Contact';
 import AdminPanel from './components/AdminPanel';
 
 export default function App() {
-  // Durable local states synced with LocalStorage
-  const [siteConfig, setSiteConfig] = useState<SiteConfig>(() => {
-    const saved = localStorage.getItem('park_seongmi_site_config') || localStorage.getItem('park_sungmi_site_config');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        let migrated = false;
-        
-        // Auto-migrate old 4-line main tagline to the new 3-line one
-        if (parsed.heroSubTitleLines && parsed.heroSubTitleLines.length === 4 && parsed.heroSubTitleLines.includes("웹 & 비주얼 디자이너")) {
-          parsed.heroSubTitleLines = [
-            "브랜드의 가치를",
-            "디자인으로 전달하는",
-            "박성미입니다."
-          ];
-          migrated = true;
-        }
-        
-        // Auto-migrate old multi-line intro description to the new concise description
-        if (parsed.introTitle && parsed.introTitle.includes("상세페이지를 중심으로")) {
-          parsed.introTitle = "상세페이지 · 배너 · 리디자인 · 3D 연출 · 영상 제작, 편집";
-          migrated = true;
-        }
-        
-        // Auto-migrate to populate default certificates if missing
-        if (!parsed.certificates || parsed.certificates.length === 0) {
-          parsed.certificates = DEFAULT_SITE_CONFIG.certificates;
-          migrated = true;
-        }
-        
-        if (migrated) {
-          localStorage.setItem('park_seongmi_site_config', JSON.stringify(parsed));
-        }
-        return parsed;
-      } catch (e) {
-        console.error('Failed to parse site config', e);
-      }
-    }
-    return DEFAULT_SITE_CONFIG;
-  });
-
-  const [skills, setSkills] = useState<SkillItem[]>(() => {
-    const saved = localStorage.getItem('park_seongmi_skills') || localStorage.getItem('park_sungmi_skills');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse skills', e);
-      }
-    }
-    return DEFAULT_SKILLS;
-  });
-
-  const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>(() => {
-    // Synchronously try localStorage first on startup for fast first render, but we'll load from IndexedDB immediately after
-    const saved = localStorage.getItem('park_seongmi_portfolio_items') || localStorage.getItem('park_sungmi_portfolio_items');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse portfolio items from localStorage', e);
-      }
-    }
-    return DEFAULT_PORTFOLIO_ITEMS;
-  });
-
-  const [messages, setMessages] = useState<ContactMessage[]>(() => {
-    const saved = localStorage.getItem('park_seongmi_contact_messages') || localStorage.getItem('park_sungmi_contact_messages');
-    if (saved) {
-      try {
-        return JSON.parse(saved);
-      } catch (e) {
-        console.error('Failed to parse contact messages', e);
-      }
-    }
-    return [];
-  });
+  // Use DEFAULT data directly as the initial states, and load the real Single Source of Truth from Firestore
+  const [siteConfig, setSiteConfig] = useState<SiteConfig>(DEFAULT_SITE_CONFIG);
+  const [skills, setSkills] = useState<SkillItem[]>(DEFAULT_SKILLS);
+  const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>(DEFAULT_PORTFOLIO_ITEMS);
+  const [messages, setMessages] = useState<ContactMessage[]>([]);
 
   const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [isPortfolioLoaded, setIsPortfolioLoaded] = useState(false);
   const [firebaseLoaded, setFirebaseLoaded] = useState(false);
 
-  // 1. Load local cache from IndexedDB on mount for rapid initial render
-  useEffect(() => {
-    async function loadFromDB() {
-      try {
-        const dbItems = await loadPortfolioFromDB();
-        if (dbItems && dbItems.length > 0) {
-          setPortfolioItems(dbItems);
-        }
-      } catch (err) {
-        console.error('Failed to load portfolio items from IndexedDB', err);
-      } finally {
-        setIsPortfolioLoaded(true);
-      }
-    }
-    loadFromDB();
-  }, []);
-
-  // 2. Load and synchronize with Firebase Firestore in the background
+  // Load and synchronize with Firebase Firestore as the Single Source of Truth
   useEffect(() => {
     async function syncWithFirebase() {
-      // Run Firestore connection test first
+      // Run Firestore connection test
       const connTest = await testFirestoreConnection();
       if (!connTest.success) {
-        console.error("Firestore connection test failed on App mount! Detailed error:", connTest.message, connTest.error);
-      } else {
-        console.log("Firestore connection test passed successfully!", connTest.message);
+        console.error("Firestore connection failed on App mount.");
       }
 
       try {
-        // Fetch site config
+        // Fetch site config (auto-seeds if missing in Firestore)
         const fbConfig = await fetchSiteConfig();
         if (fbConfig) {
           setSiteConfig(fbConfig);
-        } else {
-          console.warn("Could not read 'site_config' document (it might be missing or Firestore is offline).");
         }
 
-        // Fetch skills
+        // Fetch skills (auto-seeds if missing in Firestore)
         const fbSkills = await fetchSkills();
         if (fbSkills) {
           setSkills(fbSkills);
         }
 
-        // Fetch portfolio items
+        // Fetch portfolio items (auto-seeds if missing in Firestore)
         const fbPortfolio = await fetchPortfolioItems();
         if (fbPortfolio && fbPortfolio.length > 0) {
           setPortfolioItems(fbPortfolio);
@@ -164,40 +69,13 @@ export default function App() {
         setFirebaseLoaded(true);
       } catch (err) {
         console.error('Firebase sync error on mount:', err);
-        setFirebaseLoaded(true); // Proceed anyway to allow local persistence fallback
+        setFirebaseLoaded(true);
       }
     }
     syncWithFirebase();
   }, []);
 
-  // Sync state modifications to local storage only (never auto-save to Firestore on render)
-  useEffect(() => {
-    localStorage.setItem('park_seongmi_site_config', JSON.stringify(siteConfig));
-  }, [siteConfig]);
-
-  useEffect(() => {
-    localStorage.setItem('park_seongmi_skills', JSON.stringify(skills));
-  }, [skills]);
-
-  useEffect(() => {
-    if (!isPortfolioLoaded) return; // Prevent overwriting with initial state
-
-    // Save to IndexedDB first
-    savePortfolioToDB(portfolioItems);
-
-    // Try saving to localStorage
-    try {
-      localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(portfolioItems));
-    } catch (e) {
-      console.warn('LocalStorage storage limit reached. Large portfolio items saved in IndexedDB instead.', e);
-    }
-  }, [portfolioItems, isPortfolioLoaded]);
-
-  useEffect(() => {
-    localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(messages));
-  }, [messages]);
-
-  // Explicit handlers to save modifications to both local memory and remote Firebase Firestore
+  // Explicit handlers to save modifications solely to remote Firebase Firestore and local React memory
   const handleSaveConfig = async (newConfig: SiteConfig) => {
     setSiteConfig(newConfig);
     if (firebaseLoaded) {
@@ -214,12 +92,6 @@ export default function App() {
 
   const handleSavePortfolioItems = async (newItems: PortfolioItem[]) => {
     setPortfolioItems(newItems);
-    savePortfolioToDB(newItems);
-    try {
-      localStorage.setItem('park_seongmi_portfolio_items', JSON.stringify(newItems));
-    } catch (e) {
-      console.warn('LocalStorage storage limit reached. Portfolio items saved in IndexedDB.', e);
-    }
     if (firebaseLoaded) {
       await savePortfolioItems(newItems);
     }
