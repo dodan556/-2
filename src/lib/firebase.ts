@@ -28,6 +28,38 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 
+// Firestore Connection Test
+export async function testFirestoreConnection(): Promise<{ success: boolean; message: string; error?: any }> {
+  console.log("=== Firestore Connection Test Started ===");
+  console.log("Project ID:", firebaseConfig.projectId);
+  console.log("Database ID (configured but not used for getFirestore):", firebaseConfig.firestoreDatabaseId);
+  console.log("App ID:", firebaseConfig.appId);
+  
+  try {
+    const docRef = doc(db, "site_config", "current");
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      console.log("=== Firestore Connection Test: SUCCESS ===");
+      console.log("Successfully read 'site_config' document!");
+      console.log("Document data:", docSnap.data());
+      return { success: true, message: "Successfully connected and read 'site_config' document." };
+    } else {
+      console.log("=== Firestore Connection Test: PARTIAL SUCCESS ===");
+      console.log("Successfully connected to Firestore, but 'site_config/current' document does not exist.");
+      return { success: true, message: "Connected to Firestore, but site_config/current document is missing." };
+    }
+  } catch (err: any) {
+    console.error("=== Firestore Connection Test: FAILED ===");
+    console.error("Detailed error message:", err.message || err);
+    console.error("Detailed error code:", err.code);
+    console.error("Full error object:", err);
+    if (err.stack) {
+      console.error("Stack trace:", err.stack);
+    }
+    return { success: false, message: `Failed to connect or read site_config: ${err.message || err}`, error: err };
+  }
+}
+
 // Site Config Helper
 export async function fetchSiteConfig(): Promise<SiteConfig | null> {
   try {

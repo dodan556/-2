@@ -12,7 +12,8 @@ import {
   fetchContactMessages, 
   saveContactMessage, 
   deleteContactMessage, 
-  clearAllContactMessages 
+  clearAllContactMessages,
+  testFirestoreConnection
 } from './lib/firebase';
 
 import Header from './components/Header';
@@ -125,11 +126,21 @@ export default function App() {
   // 2. Load and synchronize with Firebase Firestore in the background
   useEffect(() => {
     async function syncWithFirebase() {
+      // Run Firestore connection test first
+      const connTest = await testFirestoreConnection();
+      if (!connTest.success) {
+        console.error("Firestore connection test failed on App mount! Detailed error:", connTest.message, connTest.error);
+      } else {
+        console.log("Firestore connection test passed successfully!", connTest.message);
+      }
+
       try {
         // Fetch site config
         const fbConfig = await fetchSiteConfig();
         if (fbConfig) {
           setSiteConfig(fbConfig);
+        } else {
+          console.warn("Could not read 'site_config' document (it might be missing or Firestore is offline).");
         }
 
         // Fetch skills
