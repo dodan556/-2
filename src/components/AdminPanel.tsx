@@ -675,6 +675,25 @@ export default function AdminPanel({
             {/* Scrollable Work Desk Content Area */}
             <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
 
+              {/* CROSS-DEVICE SYNC GUIDE BANNER */}
+              <div className="bg-amber-50/80 border border-amber-200/60 p-5 rounded-2xl space-y-3 shadow-sm animate-fade-in text-[#78350F]">
+                <div className="flex items-center space-x-2">
+                  <span className="flex h-2.5 w-2.5 relative">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500"></span>
+                  </span>
+                  <h4 className="text-xs font-black tracking-wider uppercase">💡 모든 기기(아이패드/모바일 등) 완벽 동기화 모드 작동 중</h4>
+                </div>
+                <div className="text-[11px] leading-relaxed space-y-2">
+                  <p>
+                    현재 이 사이트는 브라우저 캐시 삭제나 네트워크 오류에 영향을 받지 않고, 언제 어디서나 모든 방문자에게 작품이 완벽히 보이도록 하는 <strong>'코드 직접 수정 방식'</strong>으로 최적화되어 있습니다.
+                  </p>
+                  <p>
+                    이 관리자 창에서 수정한 내용은 현재 브라우저의 <strong>임시 세션</strong>에만 즉시 실시간 반영됩니다. 이를 모든 기기와 방문자들에게 <strong>영구적으로 배포</strong>하려면 컴퓨터 프로젝트 폴더의 <strong><code className="bg-amber-100 px-1.5 py-0.5 rounded font-mono text-[10px] text-amber-800">/src/data.ts</code></strong> 파일 내부를 직접 편집하여 원하시는 텍스트 및 이미지 주소(Base64 또는 경로)를 입력한 뒤 배포해 주시기 바랍니다!
+                  </p>
+                </div>
+              </div>
+
               {/* TAB 1: SITE INFORMATION EDIT */}
               {activeTab === 'info' && (
                 <div className="space-y-6">
