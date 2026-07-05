@@ -28,6 +28,36 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
+import { getStorage, ref, uploadString, getDownloadURL } from "firebase/storage";
+export const storage = getStorage(app);
+
+/**
+ * Uploads compressed base64 data strings (e.g. data_url) to Firebase Storage
+ * and returns the permanent public download URL.
+ */
+export async function uploadImageToStorage(base64Data: string, itemId: string, fieldName: string): Promise<string> {
+  if (!base64Data) return "";
+  // If it's already a hosted URL or not a base64 string, return it as is
+  if (
+    base64Data.startsWith("http://") || 
+    base64Data.startsWith("https://") || 
+    (!base64Data.startsWith("data:") && !base64Data.includes(";base64,"))
+  ) {
+    return base64Data;
+  }
+
+  try {
+    const fileRef = ref(storage, `portfolio_items/${itemId}/${fieldName}_${Date.now()}`);
+    // Support data URL format upload
+    const snapshot = await uploadString(fileRef, base64Data, "data_url");
+    const downloadURL = await getDownloadURL(snapshot.ref);
+    return downloadURL;
+  } catch (err) {
+    console.error(`Firebase Storage upload failed for ${fieldName} on item ${itemId}:`, err);
+    throw err;
+  }
+}
+
 // Site Config Helper
 export async function fetchSiteConfig(): Promise<SiteConfig | null> {
   try {

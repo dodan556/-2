@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SiteConfig, SkillItem, PortfolioItem, ContactMessage, PortfolioCategory, DetailPageItem, RedesignItem, BannerItem, ThreeDItem, VideoItem } from '../types';
 import { compressImage } from '../utils/imageCompressor';
+import { uploadImageToStorage } from '../lib/firebase';
 import { X, Lock, Save, Plus, Trash2, Edit3, MessageSquare, Download, Upload, HelpCircle, AlertTriangle, ArrowRight, Check, ChevronUp, ChevronDown } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -221,8 +222,8 @@ export default function AdminPanel({
     reader.readAsDataURL(file);
   };
 
-  // Add or Edit Portfolio Item
-  const handleAddPortfolioItem = (e: React.FormEvent) => {
+  // Add or Edit Portfolio Item with Firebase Storage uploads
+  const handleAddPortfolioItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newItemTitle.trim()) {
       alert('프로젝트 제목을 입력해주세요.');
@@ -243,139 +244,227 @@ export default function AdminPanel({
       ? '3d-' + Date.now()
       : 'video-' + Date.now());
 
+    // Validation
     if (newItemCategory === 'DETAIL_PAGE') {
       if (!newItemOverviewImg) {
         alert('상세페이지 전체 오버뷰 이미지를 올려주세요.');
         return;
       }
-      
-      const highlights = [];
-      if (hl1Title.trim()) {
-        highlights.push({
-          id: 'hl-custom-1',
-          title: hl1Title,
-          description: hl1Desc,
-          image: hl1Img || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" fill="%23eee"></svg>'
-        });
-      }
-      if (hl2Title.trim()) {
-        highlights.push({
-          id: 'hl-custom-2',
-          title: hl2Title,
-          description: hl2Desc,
-          image: hl2Img || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" fill="%23eee"></svg>'
-        });
-      }
-      if (hl3Title.trim()) {
-        highlights.push({
-          id: 'hl-custom-3',
-          title: hl3Title,
-          description: hl3Desc,
-          image: hl3Img || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" fill="%23eee"></svg>'
-        });
-      }
-
-      createdItem = {
-        id: itemId,
-        category: 'DETAIL_PAGE',
-        title: newItemTitle,
-        subtitle: newItemSubtitle,
-        projectIntro: newItemIntro,
-        tools: toolsArray,
-        concept: newItemConcept,
-        overviewImage: newItemOverviewImg,
-        highlights,
-        thumbnail: newItemThumbnail || undefined,
-        colors: colorsArray.length > 0 ? colorsArray : undefined
-      };
     } else if (newItemCategory === 'REDESIGN') {
       if (!newItemBeforeImg || !newItemAfterImg) {
         alert('Before 이미지와 After 이미지를 모두 등록해주세요.');
         return;
       }
-      createdItem = {
-        id: itemId,
-        category: 'REDESIGN',
-        title: newItemTitle,
-        subtitle: newItemSubtitle,
-        projectIntro: newItemIntro,
-        tools: toolsArray,
-        beforeImage: newItemBeforeImg,
-        afterImage: newItemAfterImg,
-        thumbnail: newItemThumbnail || undefined,
-        colors: colorsArray.length > 0 ? colorsArray : undefined
-      };
     } else if (newItemCategory === 'BANNER') {
       if (!newItemSingleImg) {
         alert('배너 이미지를 등록해주세요.');
         return;
       }
-      createdItem = {
-        id: itemId,
-        category: 'BANNER',
-        title: newItemTitle,
-        image: newItemSingleImg,
-        thumbnail: newItemThumbnail || undefined
-      };
     } else if (newItemCategory === 'THREE_D') {
       if (!newItemSingleImg) {
         alert('3D 렌더링 결과 이미지를 등록해주세요.');
         return;
       }
-      createdItem = {
-        id: itemId,
-        category: 'THREE_D',
-        title: newItemTitle,
-        description: newItemIntro, // reuse intro as description
-        image: newItemSingleImg,
-        thumbnail: newItemThumbnail || undefined,
-        videoUrl: newItemVideoUrl || undefined
-      };
     } else { // VIDEO
       if (!newItemVideoThumb) {
         alert('비디오 썸네일 이미지를 등록해주세요.');
         return;
       }
-      createdItem = {
-        id: itemId,
-        category: 'VIDEO',
-        title: newItemTitle,
-        description: newItemIntro,
-        videoUrl: newItemVideoUrl || 'https://www.youtube.com/embed/dQw4w9WgXcQ',
-        thumbnail: newItemThumbnail || newItemVideoThumb
-      };
     }
 
-    if (editingId) {
-      onSavePortfolioItems(portfolioItems.map((item) => item.id === editingId ? createdItem : item));
-      alert('포트폴리오 작업물이 성공적으로 수정되었습니다.');
-    } else {
-      onSavePortfolioItems([...portfolioItems, createdItem]);
-      alert('새 포트폴리오 항목이 등록되었습니다.');
+    try {
+      setImageUploading(true);
+
+      const uploadPromises: Promise<any>[] = [];
+      let uploadedThumbnail = '';
+      let uploadedOverview = '';
+      let uploadedBefore = '';
+      let uploadedAfter = '';
+      let uploadedSingle = '';
+      let uploadedVideo = '';
+      let uploadedVideoThumb = '';
+      let uploadedHl1 = '';
+      let uploadedHl2 = '';
+      let uploadedHl3 = '';
+
+      if (newItemThumbnail) {
+        uploadPromises.push(
+          uploadImageToStorage(newItemThumbnail, itemId, 'thumbnail').then(url => { uploadedThumbnail = url; })
+        );
+      }
+
+      if (newItemCategory === 'DETAIL_PAGE') {
+        uploadPromises.push(
+          uploadImageToStorage(newItemOverviewImg, itemId, 'overview').then(url => { uploadedOverview = url; })
+        );
+        if (hl1Title.trim() && hl1Img) {
+          uploadPromises.push(
+            uploadImageToStorage(hl1Img, itemId, 'hl1').then(url => { uploadedHl1 = url; })
+          );
+        }
+        if (hl2Title.trim() && hl2Img) {
+          uploadPromises.push(
+            uploadImageToStorage(hl2Img, itemId, 'hl2').then(url => { uploadedHl2 = url; })
+          );
+        }
+        if (hl3Title.trim() && hl3Img) {
+          uploadPromises.push(
+            uploadImageToStorage(hl3Img, itemId, 'hl3').then(url => { uploadedHl3 = url; })
+          );
+        }
+      } else if (newItemCategory === 'REDESIGN') {
+        uploadPromises.push(
+          uploadImageToStorage(newItemBeforeImg, itemId, 'before').then(url => { uploadedBefore = url; })
+        );
+        uploadPromises.push(
+          uploadImageToStorage(newItemAfterImg, itemId, 'after').then(url => { uploadedAfter = url; })
+        );
+      } else if (newItemCategory === 'BANNER') {
+        uploadPromises.push(
+          uploadImageToStorage(newItemSingleImg, itemId, 'banner').then(url => { uploadedSingle = url; })
+        );
+      } else if (newItemCategory === 'THREE_D') {
+        uploadPromises.push(
+          uploadImageToStorage(newItemSingleImg, itemId, '3d_render').then(url => { uploadedSingle = url; })
+        );
+        if (newItemVideoUrl) {
+          uploadPromises.push(
+            uploadImageToStorage(newItemVideoUrl, itemId, '3d_video').then(url => { uploadedVideo = url; })
+          );
+        }
+      } else if (newItemCategory === 'VIDEO') {
+        uploadPromises.push(
+          uploadImageToStorage(newItemVideoThumb, itemId, 'video_thumb').then(url => { uploadedVideoThumb = url; })
+        );
+        if (newItemVideoUrl) {
+          uploadPromises.push(
+            uploadImageToStorage(newItemVideoUrl, itemId, 'video_file').then(url => { uploadedVideo = url; })
+          );
+        }
+      }
+
+      // Wait for all uploads to finish
+      await Promise.all(uploadPromises);
+
+      // Map parameters to final Firestore fields using download URLs
+      if (newItemCategory === 'DETAIL_PAGE') {
+        const highlights = [];
+        if (hl1Title.trim()) {
+          highlights.push({
+            id: 'hl-custom-1',
+            title: hl1Title,
+            description: hl1Desc,
+            image: uploadedHl1 || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" fill="%23eee"></svg>'
+          });
+        }
+        if (hl2Title.trim()) {
+          highlights.push({
+            id: 'hl-custom-2',
+            title: hl2Title,
+            description: hl2Desc,
+            image: uploadedHl2 || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" fill="%23eee"></svg>'
+          });
+        }
+        if (hl3Title.trim()) {
+          highlights.push({
+            id: 'hl-custom-3',
+            title: hl3Title,
+            description: hl3Desc,
+            image: uploadedHl3 || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" fill="%23eee"></svg>'
+          });
+        }
+
+        createdItem = {
+          id: itemId,
+          category: 'DETAIL_PAGE',
+          title: newItemTitle,
+          subtitle: newItemSubtitle,
+          projectIntro: newItemIntro,
+          tools: toolsArray,
+          concept: newItemConcept,
+          overviewImage: uploadedOverview,
+          highlights,
+          thumbnail: uploadedThumbnail || undefined,
+          colors: colorsArray.length > 0 ? colorsArray : undefined
+        };
+      } else if (newItemCategory === 'REDESIGN') {
+        createdItem = {
+          id: itemId,
+          category: 'REDESIGN',
+          title: newItemTitle,
+          subtitle: newItemSubtitle,
+          projectIntro: newItemIntro,
+          tools: toolsArray,
+          beforeImage: uploadedBefore,
+          afterImage: uploadedAfter,
+          thumbnail: uploadedThumbnail || undefined,
+          colors: colorsArray.length > 0 ? colorsArray : undefined
+        };
+      } else if (newItemCategory === 'BANNER') {
+        createdItem = {
+          id: itemId,
+          category: 'BANNER',
+          title: newItemTitle,
+          image: uploadedSingle,
+          thumbnail: uploadedThumbnail || undefined
+        };
+      } else if (newItemCategory === 'THREE_D') {
+        createdItem = {
+          id: itemId,
+          category: 'THREE_D',
+          title: newItemTitle,
+          description: newItemIntro,
+          image: uploadedSingle,
+          thumbnail: uploadedThumbnail || undefined,
+          videoUrl: uploadedVideo || undefined
+        };
+      } else { // VIDEO
+        createdItem = {
+          id: itemId,
+          category: 'VIDEO',
+          title: newItemTitle,
+          description: newItemIntro,
+          videoUrl: uploadedVideo || 'https://www.youtube.com/embed/dQw4w9WgXcQ',
+          thumbnail: uploadedThumbnail || uploadedVideoThumb
+        };
+      }
+
+      if (editingId) {
+        onSavePortfolioItems(portfolioItems.map((item) => item.id === editingId ? createdItem : item));
+        alert('포트폴리오 작업물이 성공적으로 수정 및 업로드되었습니다.');
+      } else {
+        onSavePortfolioItems([...portfolioItems, createdItem]);
+        alert('새 포트폴리오 항목이 성공적으로 등록 및 업로드되었습니다.');
+      }
+      
+      // Reset Form States
+      setShowAddItemForm(false);
+      setEditingId(null);
+      setNewItemTitle('');
+      setNewItemSubtitle('');
+      setNewItemIntro('');
+      setNewItemTools('');
+      setNewItemConcept('');
+      setNewItemOverviewImg('');
+      setNewItemBeforeImg('');
+      setNewItemAfterImg('');
+      setNewItemSingleImg('');
+      setNewItemVideoUrl('');
+      setNewItemVideoThumb('');
+      setNewItemThumbnail('');
+      setColor1('');
+      setColor2('');
+      setColor3('');
+      setColor4('');
+      setHl1Title(''); setHl1Desc(''); setHl1Img('');
+      setHl2Title(''); setHl2Desc(''); setHl2Img('');
+      setHl3Title(''); setHl3Desc(''); setHl3Img('');
+    } catch (err: any) {
+      console.error('File storage upload error:', err);
+      alert('파일 업로드 및 저장 중 에러가 발생했습니다: ' + err.message);
+    } finally {
+      setImageUploading(false);
     }
-    
-    // Reset Form States
-    setShowAddItemForm(false);
-    setEditingId(null);
-    setNewItemTitle('');
-    setNewItemSubtitle('');
-    setNewItemIntro('');
-    setNewItemTools('');
-    setNewItemConcept('');
-    setNewItemOverviewImg('');
-    setNewItemBeforeImg('');
-    setNewItemAfterImg('');
-    setNewItemSingleImg('');
-    setNewItemVideoUrl('');
-    setNewItemVideoThumb('');
-    setNewItemThumbnail('');
-    setColor1('');
-    setColor2('');
-    setColor3('');
-    setColor4('');
-    setHl1Title(''); setHl1Desc(''); setHl1Img('');
-    setHl2Title(''); setHl2Desc(''); setHl2Img('');
-    setHl3Title(''); setHl3Desc(''); setHl3Img('');
   };
 
   // Delete Portfolio Item
