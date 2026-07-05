@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { SiteConfig, SkillItem, PortfolioItem, ContactMessage } from './types';
 import { DEFAULT_SITE_CONFIG, DEFAULT_SKILLS, DEFAULT_PORTFOLIO_ITEMS } from './data';
-import { savePortfolioToDB, loadPortfolioFromDB } from './utils/db';
 import { 
   fetchSiteConfig, 
   saveSiteConfig, 
@@ -23,106 +22,135 @@ import Contact from './components/Contact';
 import AdminPanel from './components/AdminPanel';
 
 export default function App() {
-  // Master states initialized directly from static src/data.ts for robust, cross-device consistency.
-  // This completely prevents stale LocalStorage / IndexedDB caches on other devices like iPad/Mobile!
+  // Master states loaded directly from remote Firebase Firestore
   const [siteConfig, setSiteConfig] = useState<SiteConfig>(DEFAULT_SITE_CONFIG);
   const [skills, setSkills] = useState<SkillItem[]>(DEFAULT_SKILLS);
   const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>(DEFAULT_PORTFOLIO_ITEMS);
-
   const [messages, setMessages] = useState<ContactMessage[]>([]);
 
   const [isAdminOpen, setIsAdminOpen] = useState(false);
-  const [isPortfolioLoaded, setIsPortfolioLoaded] = useState(true);
-  const [firebaseLoaded, setFirebaseLoaded] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [firebaseError, setFirebaseError] = useState<string | null>(null);
 
-  // Load and synchronize only Contact Messages on mount to prevent any data loss
+  // Synchronously fetch and initialize all data from Firebase Firestore as the unique Cloud Source of Truth
   useEffect(() => {
-    async function initializeAndSync() {
-      // Step 1: Load local messages cache instantly
+    async function loadDataFromFirestore() {
       try {
-        const savedMessages = localStorage.getItem('park_seongmi_contact_messages');
-        if (savedMessages) {
-          try { setMessages(JSON.parse(savedMessages)); } catch (e) {}
-        }
-      } catch (err) {
-        console.error('Failed to load local cached messages:', err);
-      }
+        setIsLoading(true);
+        setFirebaseError(null);
 
-      // Step 2: Fetch fresh contact messages from Firebase Cloud DB
-      try {
+        // 1. Fetch Site Config from Cloud Firestore
+        let fbConfig = await fetchSiteConfig();
+        if (!fbConfig) {
+          // If empty/new db, self-seed with beautiful default preset
+          fbConfig = DEFAULT_SITE_CONFIG;
+          await saveSiteConfig(DEFAULT_SITE_CONFIG);
+        }
+        setSiteConfig(fbConfig);
+
+        // 2. Fetch Skills from Cloud Firestore
+        let fbSkills = await fetchSkills();
+        if (!fbSkills || fbSkills.length === 0) {
+          fbSkills = DEFAULT_SKILLS;
+          await saveSkills(DEFAULT_SKILLS);
+        }
+        setSkills(fbSkills);
+
+        // 3. Fetch Portfolio Items from Cloud Firestore
+        let fbPortfolio = await fetchPortfolioItems();
+        if (!fbPortfolio || fbPortfolio.length === 0) {
+          fbPortfolio = DEFAULT_PORTFOLIO_ITEMS;
+          await savePortfolioItems(DEFAULT_PORTFOLIO_ITEMS);
+        }
+        setPortfolioItems(fbPortfolio);
+
+        // 4. Fetch Client Inquiries/Contact Messages from Cloud Firestore
         const fbMessages = await fetchContactMessages();
         if (fbMessages) {
           setMessages(fbMessages);
-          localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(fbMessages));
         }
-        setFirebaseLoaded(true);
-      } catch (err) {
-        console.error('Firebase Cloud synchronization failed for messages:', err);
-        setFirebaseLoaded(true); // Proceed anyway with cached messages
+      } catch (err: any) {
+        console.error('Failed to synchronize Firestore cloud data:', err);
+        setFirebaseError(err.message || 'Firebase Cloud Error');
+      } finally {
+        setIsLoading(false);
       }
     }
 
-    initializeAndSync();
+    loadDataFromFirestore();
   }, []);
 
-  // Handlers will update state instantly for live previews in the current session
+  // Handlers will update state instantly and save permanently directly inside Firebase Firestore
   const handleSaveConfig = async (newConfig: SiteConfig) => {
     setSiteConfig(newConfig);
-    // Notify the user about permanent code editing
-    alert("💡 사이트 설정이 현재 브라우저에 임시로 반영되었습니다.\n\n모바일/아이패드 등 모든 기기에 영구 배포하려면 'src/data.ts' 파일의 DEFAULT_SITE_CONFIG 값을 직접 타이핑해 수정해 주세요!");
+    try {
+      await saveSiteConfig(newConfig);
+    } catch (err) {
+      console.error('Failed to save config to Firestore:', err);
+      alert('데이터베이스 저장 중 실패했습니다.');
+    }
   };
 
   const handleSaveSkills = async (newSkills: SkillItem[]) => {
     setSkills(newSkills);
-    alert("💡 스킬 능력이 현재 브라우저에 임시로 반영되었습니다.\n\n모바일/아이패드 등 모든 기기에 영구 배포하려면 'src/data.ts' 파일의 DEFAULT_SKILLS 값을 직접 타이핑해 수정해 주세요!");
+    try {
+      await saveSkills(newSkills);
+    } catch (err) {
+      console.error('Failed to save skills to Firestore:', err);
+      alert('데이터베이스 저장 중 실패했습니다.');
+    }
   };
 
   const handleSavePortfolioItems = async (newItems: PortfolioItem[]) => {
     setPortfolioItems(newItems);
-    alert("💡 포트폴리오 목록이 현재 브라우저에 임시로 반영되었습니다.\n\n모바일/아이패드 등 모든 기기에 영구 배포하려면 'src/data.ts' 파일의 DEFAULT_PORTFOLIO_ITEMS 값을 직접 타이핑해 수정해 주세요!");
+    try {
+      await savePortfolioItems(newItems);
+    } catch (err) {
+      console.error('Failed to save portfolio items to Firestore:', err);
+      alert('데이터베이스 저장 중 실패했습니다.');
+    }
   };
 
-  // Handle addition of inquiries from clients (This goes to Firestore as usual!)
+  // Handle addition of inquiries from clients
   const handleNewMessage = async (newMsg: Omit<ContactMessage, 'id' | 'createdAt'>) => {
     const messageItem: ContactMessage = {
       ...newMsg,
       id: 'msg-' + Date.now(),
       createdAt: new Date().toISOString()
     };
-    setMessages((prev) => {
-      const updated = [messageItem, ...prev];
-      localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(updated));
-      return updated;
-    });
+    setMessages((prev) => [messageItem, ...prev]);
     await saveContactMessage(messageItem);
   };
 
-  // Delete single inquiry
+  // Delete single inquiry from Firestore
   const handleDeleteMessage = async (id: string) => {
-    setMessages((prev) => {
-      const updated = prev.filter((m) => m.id !== id);
-      localStorage.setItem('park_seongmi_contact_messages', JSON.stringify(updated));
-      return updated;
-    });
+    setMessages((prev) => prev.filter((m) => m.id !== id));
     await deleteContactMessage(id);
   };
 
-  // Clear all inquiries
+  // Clear all inquiries from Firestore
   const handleClearMessages = async () => {
     if (confirm('모든 접수된 문의 내역을 비우시겠습니까?')) {
       const currentMessages = [...messages];
       setMessages([]);
-      localStorage.setItem('park_seongmi_contact_messages', JSON.stringify([]));
       await clearAllContactMessages(currentMessages);
     }
   };
 
-  // Import Backup data block
+  // Import Backup and restore Firestore database in real-time
   const handleImportBackup = async (imported: { config: SiteConfig; skills: SkillItem[]; portfolioItems: PortfolioItem[] }) => {
     setSiteConfig(imported.config);
     setSkills(imported.skills);
     setPortfolioItems(imported.portfolioItems);
-    alert("💡 백업 데이터가 현재 브라우저 세션에 임시로 주입되었습니다.\n\n이를 모든 기기 및 클라우드에 영구 배포하려면 가져온 내용을 바탕으로 'src/data.ts' 코드 파일을 직접 수정해 주세요!");
+    try {
+      await saveSiteConfig(imported.config);
+      await saveSkills(imported.skills);
+      await savePortfolioItems(imported.portfolioItems);
+      alert('🎉 축하합니다! 백업 파일의 모든 데이터가 Firebase Firestore 클라우드 데이터베이스에 실시간으로 성공적으로 영구 복원되었습니다!');
+    } catch (err) {
+      console.error('Failed to restore backup to Firestore:', err);
+      alert('데이터베이스 영구 저장 중 실패했습니다.');
+    }
   };
 
   const scrollToSection = (id: string) => {
@@ -138,6 +166,17 @@ export default function App() {
       });
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#FBFBFA] flex flex-col items-center justify-center space-y-4">
+        {/* Modern minimal loading spinner */}
+        <div className="w-10 h-10 border-2 border-[#1C1C1A]/10 border-t-[#1C1C1A] rounded-full animate-spin"></div>
+        <p className="text-xs font-black tracking-[0.2em] text-[#1C1C1A] uppercase">PARK SEONGMI</p>
+        <p className="text-[10px] text-[#70706B] tracking-wider animate-pulse">포트폴리오 데이터를 안전하게 동기화 중입니다...</p>
+      </div>
+    );
+  }
 
   return (
     <div id="portfolio-applet" className="min-h-screen bg-[#FBFBFA] flex flex-col relative">
