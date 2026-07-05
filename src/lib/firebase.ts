@@ -12,7 +12,6 @@ import {
   writeBatch 
 } from "firebase/firestore";
 import { SiteConfig, SkillItem, PortfolioItem, ContactMessage } from "../types";
-import { DEFAULT_SITE_CONFIG, DEFAULT_SKILLS, DEFAULT_PORTFOLIO_ITEMS } from "../data";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBFpAKR2Rnm_qiqYG3r63pceQjvXLZj_6c",
@@ -30,7 +29,6 @@ export const db = getFirestore(app);
 // Firestore Connection Test
 export async function testFirestoreConnection(): Promise<{ success: boolean; message: string; error?: any }> {
   try {
-    // Attempt to read site_config/current as a test
     const docRef = doc(db, "site_config", "current");
     await getDoc(docRef);
     
@@ -46,17 +44,13 @@ export async function testFirestoreConnection(): Promise<{ success: boolean; mes
   }
 }
 
-// Site Config Helper with Auto-Seed fallback
+// Site Config Helper (Read-only on fetch)
 export async function fetchSiteConfig(): Promise<SiteConfig | null> {
   try {
     const docRef = doc(db, "site_config", "current");
     const docSnap = await getDoc(docRef);
     if (docSnap.exists()) {
       return docSnap.data() as SiteConfig;
-    } else {
-      console.log("site_config/current does not exist, seeding standard defaults...");
-      await setDoc(docRef, DEFAULT_SITE_CONFIG);
-      return DEFAULT_SITE_CONFIG;
     }
   } catch (err) {
     console.error("Error fetching site config from Firestore:", err);
@@ -72,7 +66,7 @@ export async function saveSiteConfig(config: SiteConfig): Promise<void> {
   }
 }
 
-// Skills Helper with Auto-Seed fallback
+// Skills Helper (Read-only on fetch)
 export async function fetchSkills(): Promise<SkillItem[] | null> {
   try {
     const docRef = doc(db, "skills", "current");
@@ -80,10 +74,6 @@ export async function fetchSkills(): Promise<SkillItem[] | null> {
     if (docSnap.exists()) {
       const data = docSnap.data();
       return data.list as SkillItem[];
-    } else {
-      console.log("skills/current does not exist, seeding standard defaults...");
-      await setDoc(docRef, { list: DEFAULT_SKILLS });
-      return DEFAULT_SKILLS;
     }
   } catch (err) {
     console.error("Error fetching skills from Firestore:", err);
@@ -99,32 +89,18 @@ export async function saveSkills(skills: SkillItem[]): Promise<void> {
   }
 }
 
-// Portfolio Items Helper with Auto-Seed fallback
+// Portfolio Items Helper (Read-only on fetch)
 export async function fetchPortfolioItems(): Promise<PortfolioItem[] | null> {
   try {
     const q = query(collection(db, "portfolio_items"), orderBy("order", "asc"));
     const querySnapshot = await getDocs(q);
-    if (!querySnapshot.empty) {
-      const items: PortfolioItem[] = [];
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        const { order, ...itemData } = data;
-        items.push({ id: doc.id, ...itemData } as PortfolioItem);
-      });
-      return items;
-    } else {
-      console.log("portfolio_items collection is empty, seeding standard defaults...");
-      const batch = writeBatch(db);
-      DEFAULT_PORTFOLIO_ITEMS.forEach((item, index) => {
-        const docRef = doc(db, "portfolio_items", item.id);
-        batch.set(docRef, {
-          ...item,
-          order: index
-        });
-      });
-      await batch.commit();
-      return DEFAULT_PORTFOLIO_ITEMS;
-    }
+    const items: PortfolioItem[] = [];
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      const { order, ...itemData } = data;
+      items.push({ id: doc.id, ...itemData } as PortfolioItem);
+    });
+    return items;
   } catch (err) {
     console.error("Error fetching portfolio items from Firestore:", err);
   }

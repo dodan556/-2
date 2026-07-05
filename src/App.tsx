@@ -42,19 +42,19 @@ export default function App() {
       }
 
       try {
-        // Fetch site config (auto-seeds if missing in Firestore)
+        // Fetch site config from Firestore
         const fbConfig = await fetchSiteConfig();
         if (fbConfig) {
           setSiteConfig(fbConfig);
         }
 
-        // Fetch skills (auto-seeds if missing in Firestore)
+        // Fetch skills from Firestore
         const fbSkills = await fetchSkills();
         if (fbSkills) {
           setSkills(fbSkills);
         }
 
-        // Fetch portfolio items (auto-seeds if missing in Firestore)
+        // Fetch portfolio items from Firestore
         const fbPortfolio = await fetchPortfolioItems();
         if (fbPortfolio && fbPortfolio.length > 0) {
           setPortfolioItems(fbPortfolio);
